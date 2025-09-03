@@ -1,0 +1,9 @@
+# Ignore Firebase secret keys
+firebase_key.json
+*.json
+
+# Ignore the entire secrets directory
+.streamlit/
+
+# Ignore Python cache files
+__pycache__/
