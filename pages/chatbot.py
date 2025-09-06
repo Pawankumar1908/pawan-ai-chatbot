@@ -5,12 +5,12 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime
 
-# --- Firebase Admin SDK Initialization ---
-# This ensures Firebase is ready for use on this page.
+# --- Firebase Initialization ---
+# This is the cloud-safe way to initialize Firebase using Streamlit secrets.
 if not firebase_admin._apps:
     try:
-        # NOTE: Ensure 'firebase_key.json' is in the root directory (pawan_ai_app).
-        creds = credentials.Certificate("firebase_key.json")
+        creds_dict = st.secrets["firebase_credentials"]
+        creds = credentials.Certificate(creds_dict)
         firebase_admin.initialize_app(creds)
     except Exception as e:
         st.error(f"Firebase Admin SDK initialization failed: {e}")
@@ -19,13 +19,11 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 # --- Page Protection ---
-# This is the new, correct way to protect the page.
-# It checks the custom session state variable set by app.py upon successful login.
+# This ensures only logged-in users can see this page.
 if 'logged_in' not in st.session_state or not st.session_state['logged_in']:
     st.error("You need to log in to access this page. Please go back to the main page.")
     st.stop()
 
-# Get user info from the session state.
 user_info = st.session_state['user_info']
 user_uid = user_info['uid']
 
@@ -33,14 +31,14 @@ user_uid = user_info['uid']
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     model = genai.GenerativeModel('gemini-1.5-pro-latest')
-except Exception:
-    st.error("Google API Key is not configured correctly. Please check your secrets.")
+except Exception as e:
+    st.error(f"Google API Key is not configured correctly. Error: {e}")
     st.stop()
 
 # --- Your Resume Data for RAG ---
 PAWAN_RESUME_CONTEXT = """
 BUDDA PAWAN KUMAR
-bpawan1908@gmail.com — +91-7981456407 — Visakhapatnam, India
+bpaw19@gmail.com — +91-7799884455 — Visakhapatnam, India
 GitHub: https://github.com/Pawankumar1908 | LinkedIn: www.linkedin.com/in/pawan-kumar-buddha
 ---
 SUMMARY
@@ -48,25 +46,18 @@ Computer Science undergraduate passionate about machine learning and software de
 ---
 EDUCATION
 Bachelor of Technology in Computer Science Engineering | 2022 – 2026
-GITAM University, Visakhapatnam
-- CGPA: 7.56
+GITAM University, Visakhapatnam - CGPA: 7.56
 
 Intermediate (MPC) | 2020 – 2022
-Sri Viswa Junior College, Dwarakanagar, Visakhapatnam, AP, India
-- Percentage: 80%
+Sri Viswa Junior College, dwarakanagar,visakhapatnam, AP,India - Percentage: 80%
 
 Class X | 2020
-Siva Sivani School, Marripalem, Visakhapatnam, AP, India
-- Percentage: 93%
+siva sivani school marripalem,visakhapatnam, AP, India - Percentage: 93%
 ---
 EXPERIENCE
 AI/ML Intern – Reliance Jio | May 2025 – July 2025 | Hyderabad, India
 - Worked on speaker isolation using DeepFilterNet and pretrained models.
 - Optimized Python-based real-time audio pipelines.
-
-Team Leader – AIESEC Visakhapatnam | Jan 2024 – Jan 2025
-- Led marketing efforts, built external partnerships, and contributed to flagship events.
-- Served as Vice President for Youth Speak Forum and Global Goals Run, managing logistics and outreach.
 ---
 PROJECTS
 → Real-Time Fire Detection System: Deployed a CNN model using Raspberry Pi 5.
@@ -83,16 +74,14 @@ Domains: Machine Learning, Deep Learning, Embedded Systems, IoT
 Soft Skills: Rapport Building, Stakeholder Management, People Management, Communication
 
 Certificates:
-- Oracle Cloud Infrastructure 2025 Certified AI Foundations Associate – Oracle
-- Python Data Structures – Coursera
-- Entrepreneurship I & II – Coursera
+• Oracle Cloud Infrastructure 2025 Certified AI Foundations Associate – Oracle
+• Python Data Structures – Coursera
+• Entrepreneurship I & II – Coursera
 
 Achievements:
-- Awarded Best Member 2024.1 – AIESEC in Visakhapatnam
-- Led large-scale events like Youth Speak Forum and Global Goals Run
-- Built 3+ real-time IoT/AI projects showcased in demos and tech reviews
----
-
+• Awarded Best Member 2024.1 – AIESEC in Visakhapatnam
+• Led large-scale events like Youth Speak Forum and Global Goals Run
+• Built 3+ real-time IoT/AI projects showcased in demos and tech reviews
 """
 
 # --- Helper Functions & Firestore Management ---
@@ -104,7 +93,7 @@ def stream_response(prompt):
             yield chunk.text
             time.sleep(0.02)
     except Exception as e:
-        st.error(f"An error occurred. Please wait and try again. Error: {e}")
+        st.error(f"An error occurred. You might be making requests too quickly. Please wait a moment and try again. Error: {e}")
         yield ""
 
 def load_chat_history():
@@ -118,8 +107,9 @@ def save_chat_session(session_data):
     db.collection('users').document(user_uid).collection('chat_sessions').document(session_id).set(session_data)
 
 # --- Session State & UI ---
-if "chat_sessions" not in st.session_state:
+if "chat_sessions" not in st.session_state or st.session_state.get('user_uid') != user_uid:
     st.session_state.chat_sessions = load_chat_history()
+    st.session_state.user_uid = user_uid
 if "current_chat_index" not in st.session_state:
     st.session_state.current_chat_index = -1
 
@@ -150,6 +140,11 @@ else:
 
 if user_prompt := st.chat_input("Ask your question here..."):
     is_new_chat = (st.session_state.current_chat_index == -1)
+    
+    # Display user message immediately
+    with st.chat_message("user"):
+        st.markdown(user_prompt)
+
     if is_new_chat:
         chat_title = user_prompt[:30] + "..."
         new_session_id = str(int(time.time() * 1000))
@@ -161,12 +156,10 @@ if user_prompt := st.chat_input("Ask your question here..."):
         }
         st.session_state.chat_sessions.insert(0, new_session)
         st.session_state.current_chat_index = 0
-
+    
     current_session = st.session_state.chat_sessions[st.session_state.current_chat_index]
     user_message = {"role": "user", "content": user_prompt}
     current_session["messages"].append(user_message)
-    with st.chat_message("user"):
-        st.markdown(user_prompt)
 
     with st.chat_message("assistant"):
         final_prompt = ""
